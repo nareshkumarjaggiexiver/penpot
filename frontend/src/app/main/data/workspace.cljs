@@ -568,14 +568,11 @@
       (let [{:keys [width height]} data
 
             [vbc-x vbc-y] (viewport-center state)
-
             x (:x data (- vbc-x (/ width 2)))
             y (:y data (- vbc-y (/ height 2)))
-
             page-id (:current-page-id state)
             frame-id (-> (dwc/lookup-page-objects state page-id)
                          (cp/frame-id-by-position {:x frame-x :y frame-y}))
-
             shape (-> (cp/make-minimal-shape type)
                       (merge data)
                       (merge {:x x :y y})
@@ -1430,13 +1427,85 @@
                               :path (:path image)}}]
         (rx/of (create-and-add-shape :image x y shape))))))
 
+
+(defn- svg-dimensions [data]
+  (let [width (get-in data [:attrs :width])
+        height (get-in data [:attrs :height])
+        viewbox (get-in data [:attrs :viewBox] (str "0 0 " width " " height))
+        [_ _ width-str height-str] (str/split viewbox " ")
+        width (d/parse-integer width-str)
+        height (d/parse-integer height-str)]
+    [width height]))
+
 (defn svg-upload [data x y]
   (ptk/reify ::svg-upload
     ptk/WatchEvent
     (watch [_ state stream]
-      (.log js/console "???" (clj->js data))
-      (rx/empty)
-      )))
+      (.log js/console "data" (clj->js data))
+      (let [page-id (:current-page-id state)
+            objects (dwc/lookup-page-objects state page-id)
+            frame-id (cp/frame-id-by-position objects {:x x :y y})
+
+            [width height] (svg-dimensions data)
+            x (- x (/ width 2))
+            y (- y (/ height 2))
+
+            create-svg-raw (fn [{:keys [tag] :as data} unames]
+                             (let [base (cond (string? tag) tag
+                                              (keyword? tag) (name tag)
+                                              (nil? tag) "node"
+                                              :else (str tag))]
+                               (-> {:id (uuid/next)
+                                    :type :svg-raw
+                                    :name (dwc/generate-unique-name unames (str "svg-" base))
+                                    :frame-id frame-id
+                                    ;; For svg children we set its coordinates as the root of the svg
+                                    :width width
+                                    :height height
+                                    :x x
+                                    :y y
+                                    :content data}
+                                   (gsh/setup-selrect))))
+
+            add-svg-child
+            (fn add-svg-child [parent-id [unames [rchs uchs]] [index {:keys [content] :as data}]]
+              (let [shape (create-svg-raw data unames)
+                    shape-id (:id shape)
+                    [rch1 uch1] (dwc/add-shape-changes page-id shape)
+
+                    ;; Mov-objects won't have undo because we "delete" the object in the undo of the
+                    ;; previous operation
+                    rch2 [{:type :mov-objects
+                           :parent-id parent-id
+                           :frame-id frame-id
+                           :page-id page-id
+                           :index index
+                           :shapes [shape-id]}]
+
+                    ;; Careful! the undo changes are concatenated reversed (we undo in reverse order
+                    changes [(d/concat rchs rch1 rch2) (d/concat uch1 uchs)]
+                    unames (conj unames (:name shape))]
+                (reduce (partial add-svg-child shape-id) [unames changes] (d/enumerate (:content data)))))
+
+            unames (dwc/retrieve-used-names objects)
+
+            svg-name (->> (str/replace (:name data) ".svg" "")
+                          (dwc/generate-unique-name unames))
+
+            root-shape (create-svg-raw data unames)
+            root-shape (-> root-shape
+                           (assoc :name svg-name))
+            root-id (:id root-shape)
+
+            changes (dwc/add-shape-changes page-id root-shape)
+
+            [_ [rchanges uchanges]] (reduce (partial add-svg-child root-id) [unames changes] (d/enumerate (:content data)))]
+        
+        #_(.log js/console (clj->js rchanges))
+        
+        (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true})
+               (dwc/select-shapes (d/ordered-set root-id)))
+        ))))
 
 (defn- paste-image
   [image]

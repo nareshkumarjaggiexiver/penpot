@@ -29,11 +29,14 @@
 
 (defn- clean-svg
   [^InputStream input]
-  (let [result (shell/sh "svgcleaner" "--allow-bigger-file" "-c" "-" :in input :out-enc :bytes)
+  (let [result (shell/sh
+                ;; "svgcleaner" "--allow-bigger-file" "-c" "-"
+                "svgo" "-i" "-" "-o" "-"
+                :in input :out-enc :bytes)
         err-str (:err result)]
     (when (or (not= 0 (:exit result))
               ;; svgcleaner returns 0 with some errors, we need to check
-              (and (not (nil? err-str)) (str/starts-with? err-str "Error")))
+              (and (not= err-str "") (not (nil? err-str)) (str/starts-with? err-str "Error")))
       (ex/raise :type :validation
                 :code :unable-to-optimize
                 :hint (:err result)))

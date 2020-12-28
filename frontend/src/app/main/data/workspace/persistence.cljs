@@ -398,6 +398,7 @@
                (and (not svg-as-images) (string? uri) (str/ends-with? uri ".svg"))
                (->> (fetch-svg uri)
                     (rx/merge-map parse-svg)
+                    (rx/map #(assoc % :name name))
                     (rx/do on-svg))
 
                (string? uri)
@@ -419,8 +420,9 @@
                        (rx/filter #(and (not svg-as-images) (is-svg? %)))
                        (rx/merge-map #(.text %))
                        (rx/merge-map parse-svg)
-                       (rx/do on-svg))
-                  )))]
+                       (rx/with-latest vector common)
+                       (rx/map #(assoc (first %) :name (.-name (second %))))
+                       (rx/do on-svg)))))]
 
          (rx/concat
           (rx/of (dm/show {:content (tr "media.loading")
