@@ -29,18 +29,15 @@
         on-click
         (mf/use-callback #(dom/click (mf/ref-val ref)))
 
-        on-uploaded
+        handle-image-upload
         (mf/use-callback
-         (fn [{:keys [id name] :as image}]
-           (let [shape {:name name
-                        :width  (:width image)
-                        :height (:height image)
-                        :metadata {:width  (:width image)
-                                   :height (:height image)
-                                   :id     (:id image)
-                                   :path   (:path image)}}
-                 aspect-ratio (/ (:width image) (:height image))]
-             (st/emit! (dw/create-and-add-shape :image 0 0 shape)))))
+         (fn [image]
+           (st/emit! (dw/image-upload image 0 0))))
+
+        handle-svg-upload
+        (mf/use-callback
+         (fn [svg]
+           (st/emit! (dw/svg-upload svg 0 0))))
 
         on-files-selected
         (mf/use-callback
@@ -50,7 +47,8 @@
                       (with-meta {:file-id (:id file)
                                   :local? true
                                   :js-files js-files}
-                        {:on-success on-uploaded})))))]
+                        {:on-image handle-image-upload
+                         :on-svg handle-svg-upload})))))]
 
        [:li.tooltip.tooltip-right
         {:alt (tr "workspace.toolbar.image")

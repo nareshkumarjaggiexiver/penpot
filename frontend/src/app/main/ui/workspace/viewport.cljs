@@ -445,22 +445,15 @@
                      (dnd/has-type? e "text/uri-list"))
              (dom/prevent-default e))))
 
-        ;; TODO: seems duplicated callback is the same as one located
-        ;; in left_toolbar
-        on-uploaded
+        on-image-uploaded
         (mf/use-callback
-         (fn [{:keys [id name] :as image} {:keys [x y]}]
-           (let [shape {:name name
-                        :width (:width image)
-                        :height (:height image)
-                        :x (- x (/ (:width image) 2))
-                        :y (- y (/ (:height image) 2))
-                        :metadata {:width (:width image)
-                                   :height (:height image)
-                                   :id (:id image)
-                                   :path (:path image)}}
-                 aspect-ratio (/ (:width image) (:height image))]
-             (st/emit! (dw/create-and-add-shape :image x y shape)))))
+         (fn [image {:keys [x y]}]
+           (st/emit! (dw/image-upload image x y))))
+
+        on-svg-uploaded
+        (mf/use-callback
+         (fn [image {:keys [x y]}]
+           (st/emit! (dw/svg-upload image x y))))
 
         on-drop
         (mf/use-callback
@@ -500,7 +493,8 @@
                                          :local? true
                                          :uri uri
                                          :name name}
-                               {:on-success #(on-uploaded % viewport-coord)})))
+                               {:on-image #(on-image-uploaded % viewport-coord)
+                                :on-svg #(on-svg-uploaded % viewport-coord)})))
                       (map dw/upload-media-objects)
                       (apply st/emit!)))
 
@@ -508,11 +502,11 @@
                (let [js-files (dnd/get-files event)
                      params   {:file-id (:id file)
                                :local? true
-                               :js-files js-files
-                               }]
+                               :js-files js-files}]
                  (st/emit! (dw/upload-media-objects
                             (with-meta params
-                              {:on-success #(on-uploaded % viewport-coord)}))))))))
+                              {:on-image #(on-image-uploaded % viewport-coord)
+                               :on-svg #(on-svg-uploaded % viewport-coord)}))))))))
 
         on-paste
         (mf/use-callback

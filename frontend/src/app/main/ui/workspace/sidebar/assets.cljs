@@ -166,8 +166,9 @@
          (fn [js-files]
            (let [params (with-meta {:file-id file-id
                                     :local? false
-                                    :js-files js-files}
-                          {:on-success on-media-uploaded})]
+                                    :js-files js-files
+                                    :svg-as-images true}
+                          {:on-image on-media-uploaded})]
              (st/emit! (dw/upload-media-objects params)))))
 
         on-delete

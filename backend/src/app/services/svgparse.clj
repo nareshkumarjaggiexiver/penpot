@@ -10,6 +10,7 @@
 (ns app.services.svgparse
   (:require
    [app.common.exceptions :as ex]
+   [cuerdas.core :as str]
    [clojure.xml :as xml]
    [clojure.java.shell :as shell]
    [clojure.java.io :as io])
@@ -21,10 +22,18 @@
   [^String data]
   (IOUtils/toInputStream data "UTF-8"))
 
+(defn- stream->string
+  [input]
+  (with-open [istream (io/input-stream input)]
+    (-> (IOUtils/toString input "UTF-8"))))
+
 (defn- clean-svg
   [^InputStream input]
-  (let [result (shell/sh "svgcleaner" "-c" "-" :in input :out-enc :bytes)]
-    (when (not= 0 (:exit result))
+  (let [result (shell/sh "svgcleaner" "--allow-bigger-file" "-c" "-" :in input :out-enc :bytes)
+        err-str (:err result)]
+    (when (or (not= 0 (:exit result))
+              ;; svgcleaner returns 0 with some errors, we need to check
+              (and (not (nil? err-str)) (str/starts-with? err-str "Error")))
       (ex/raise :type :validation
                 :code :unable-to-optimize
                 :hint (:err result)))

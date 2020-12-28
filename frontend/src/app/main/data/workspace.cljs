@@ -1414,33 +1414,49 @@
                (dwc/add-shape shape)
                (dwc/commit-undo-transaction))))))
 
-(defn- image-uploaded
-  [image]
-  (let [{:keys [x y]} @ms/mouse-position
-        {:keys [width height]} image
-        shape {:name (:name image)
-               :width width
-               :height height
-               :x (- x (/ width 2))
-               :y (- y (/ height 2))
-               :metadata {:width width
-                          :height height
-                          :id (:id image)
-                          :path (:path image)}}]
-    (st/emit! (create-and-add-shape :image x y shape))))
+(defn image-upload [image x y]
+  (ptk/reify ::add-image
+    ptk/WatchEvent
+    (watch [_ state stream]
+      (let [{:keys [width height]} image
+            shape {:name (:name image)
+                   :width width
+                   :height height
+                   :x (- x (/ width 2))
+                   :y (- y (/ height 2))
+                   :metadata {:width width
+                              :height height
+                              :id (:id image)
+                              :path (:path image)}}]
+        (rx/of (create-and-add-shape :image x y shape))))))
+
+(defn svg-upload [data x y]
+  (ptk/reify ::svg-upload
+    ptk/WatchEvent
+    (watch [_ state stream]
+      (.log js/console "???" (clj->js data))
+      (rx/empty)
+      )))
 
 (defn- paste-image
   [image]
   (ptk/reify ::paste-bin-impl
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [file-id (get-in state [:workspace-file :id])
+      (let [response-sb (rx/subject)
+            file-id (get-in state [:workspace-file :id])
             params  {:file-id file-id
                      :local? true
                      :js-files [image]}]
-        (rx/of (dwp/upload-media-objects
-                (with-meta params
-                  {:on-success image-uploaded})))))))
+        (rx/concat (rx/of (dwp/upload-media-objects
+                           (with-meta params
+                             {:on-image
+                              #(let [{:keys [x y]} @ms/mouse-position]
+                                 (rx/push! response-sb (image-upload % x y)))
+                              :on-svg
+                              #(let [{:keys [x y]} @ms/mouse-position]
+                                 (rx/push! response-sb (svg-upload % x y)))})))
+                   (rx/take 1 response-sb))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interactions
@@ -1532,6 +1548,7 @@
                   :option :background
                   :value previus-color}]
                 {:commit-local? true}))))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Exports

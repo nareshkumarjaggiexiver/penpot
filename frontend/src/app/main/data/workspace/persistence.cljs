@@ -9,6 +9,8 @@
 
 (ns app.main.data.workspace.persistence
   (:require
+   [cuerdas.core :as str]
+   [app.util.http :as http]
    [app.common.data :as d]
    [app.common.geom.point :as gpt]
    [app.common.media :as cm]
@@ -348,17 +350,33 @@
   (s/keys :req-un [::file-id ::local?]
           :opt-un [::uri ::di/js-files]))
 
+(defn parse-svg [text]
+  (->> (http/send! {:method :post
+                    :uri "/api/svg"
+                    :headers {"content-type" "image/svg+xml"}
+                    :body text})
+       (rx/map (fn [{:keys [status body]}]
+                 (let [result (t/decode body)]
+                   (if (= status 200)
+                     result
+                     (throw result)))))))
+
+(defn fetch-svg [uri]
+  (->> (http/send! {:method :get :uri uri})
+       (rx/map :body)))
+
 (defn upload-media-objects
-  [{:keys [file-id local? js-files uri name] :as params}]
+  [{:keys [file-id local? js-files uri name svg-as-images] :as params}]
   (us/assert ::upload-media-objects-params params)
    (ptk/reify ::upload-media-objects
      ptk/WatchEvent
      (watch [_ state stream]
-       (let [{:keys [on-success on-error]
-              :or {on-success identity}} (meta params)
+       (let [{:keys [on-image on-svg on-error]
+              :or {on-image identity on-svg identity}} (meta params)
 
              is-library (not= file-id (:id (:workspace-file state)))
-             prepare-js-file
+
+             prepare-image-file
              (fn [js-file]
                {:name (.-name js-file)
                 :file-id file-id
@@ -370,22 +388,46 @@
                {:file-id file-id
                 :is-local local?
                 :url uri
-                :name name})]
+                :name name})
+
+             is-svg? (fn [js-file]
+                       (= (.-type js-file) "image/svg+xml"))
+
+             image-stream
+             (cond
+               (and (not svg-as-images) (string? uri) (str/ends-with? uri ".svg"))
+               (->> (fetch-svg uri)
+                    (rx/merge-map parse-svg)
+                    (rx/do on-svg))
+
+               (string? uri)
+               (->> (rx/of uri)
+                    (rx/map prepare-uri)
+                    (rx/mapcat #(rp/mutation! :add-media-object-from-url %))
+                    (rx/do on-image))
+
+               :else
+               (let [common (->> (rx/from js-files)
+                                 (rx/map di/validate-file))]
+                 (rx/merge
+                  (->> common
+                       (rx/filter #(or svg-as-images (not (is-svg? %))))
+                       (rx/map prepare-image-file)
+                       (rx/merge-map #(rp/mutation! :upload-media-object %))
+                       (rx/do on-image))
+                  (->> common
+                       (rx/filter #(and (not svg-as-images) (is-svg? %)))
+                       (rx/merge-map #(.text %))
+                       (rx/merge-map parse-svg)
+                       (rx/do on-svg))
+                  )))]
 
          (rx/concat
           (rx/of (dm/show {:content (tr "media.loading")
                            :type :info
                            :timeout nil
                            :tag :media-loading}))
-          (->> (if (string? uri)
-                 (->> (rx/of uri)
-                      (rx/map prepare-uri)
-                      (rx/mapcat #(rp/mutation! :add-media-object-from-url %)))
-                 (->> (rx/from js-files)
-                      (rx/map di/validate-file)
-                      (rx/map prepare-js-file)
-                      (rx/mapcat #(rp/mutation! :upload-media-object %))))
-               (rx/do on-success)
+          (->> image-stream
                (rx/catch (fn [error]
                            (cond
                              (= (:code error) :media-type-not-allowed)
@@ -393,6 +435,9 @@
 
                              (= (:code error) :media-type-mismatch)
                              (rx/of (dm/error (tr "errors.media-type-mismatch")))
+
+                             (= (:code error) :unable-to-optimize)
+                             (rx/of (dm/error (:hint error)))
 
                              (fn? on-error)
                              (do
